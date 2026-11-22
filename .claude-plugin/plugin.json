@@ -45,14 +45,27 @@
       "title": "Sending on a cold cache",
       "description": "warn: show the cost and send. ask: ask before sending. off: do nothing. Only applies above the context threshold.",
       "default": "warn",
-      "options": ["warn", "ask", "off"]
+      "options": [
+        "warn",
+        "ask",
+        "off"
+      ]
     },
     "display": {
       "type": "string",
       "title": "Display",
       "description": "band: a line above the prompt. status: an entry in the status line.",
       "default": "band",
-      "options": ["band", "status"]
+      "options": [
+        "band",
+        "status"
+      ]
+    },
+    "showLimits": {
+      "type": "boolean",
+      "title": "Show plan limits and cost",
+      "description": "Adds a line with your 5-hour and weekly usage (with time to reset) and the session cost, and a toast at 80% and 95% of a window. Needs a subscription: with an API key no limits are reported.",
+      "default": false
     }
   }
 }

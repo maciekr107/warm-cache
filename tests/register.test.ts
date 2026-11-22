@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
-import type { CommandRunInput, ModelForkResult, On, PromptSubmitInput, SessionStartInput, TurnCompleteInput, TurnUsage } from 'claude-code'
+import type { CommandRunInput, ModelForkResult, On, PromptSubmitInput, SessionMeasureInput, SessionRateLimit, SessionStartInput, TurnCompleteInput, TurnUsage } from 'claude-code'
 
 const MIN = 60 * 1000
 const START = 1_000_000
@@ -19,27 +19,30 @@ const run = (args: string): CommandRunInput => ({
   command: 'warm', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 },
 })
 
-function world(on: On, live: { tokens: number }, forkWrite = 0) {
+function world(on: On, live: { tokens: number; rateLimits?: SessionRateLimit[]; costUsd?: number }, forkWrite = 0) {
   mock.store(on, {})
   const forks: number[] = []
   const logs: string[] = []
   const status: Array<string | undefined> = []
+  const toasts: string[] = []
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('session.id', () => ({ value: 'S1' }))
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
-  on('session.usage', () => ({ value: { startedAt: START, context: { window: 1000000, tokens: live.tokens }, rateLimits: [] } }))
+  on('session.usage', () => ({ value: { startedAt: START, context: { window: 1000000, tokens: live.tokens }, rateLimits: live.rateLimits ?? [], ...(live.costUsd != null ? { cost: { usd: live.costUsd } } : {}) } }))
   on('command.register', ($, e) => ({ value: { command: e.name } }))
   on('prompt.submit', ($, e) => ({ text: e.text }))
   on('turn.complete', ($, e) => ({ text: e.answer }))
   on('classic.SessionStart', () => ({}))
+  on('session.measure', ($, e) => ({ changed: e.changed }))
   on('ui.log', ($, e) => { logs.push(e.text); return { value: undefined } })
+  on('ui.toast', ($, e) => { toasts.push(e.text); return { value: undefined } })
   on('ui.status', ($, e) => { status.push(e.text); return { value: undefined } })
   on('model.fork', () => {
     forks.push(forks.length)
     const value: ModelForkResult = { isAnswered: true, text: 'warm', usage: { input_tokens: 2, output_tokens: 1, cache_read_input_tokens: live.tokens, cache_creation_input_tokens: forkWrite } }
     return { value }
   })
-  return { forks, logs, status }
+  return { forks, logs, status, toasts }
 }
 
 /** n user messages, each followed by a turn at the given context size. */
@@ -169,4 +172,52 @@ test('/clear resets the message counter', { options: { minMessages: 5 } }, async
   await talk($, 1, 100000)
   await clock.advance(60 * MIN)
   expect(w.forks.length).toBe(0)
+})
+
+const IN_80_MIN = (now: number) => new Date(now + 80 * MIN).toISOString()
+const measure = (limits: SessionRateLimit[]): SessionMeasureInput => ({
+  context: { window: 1000000, tokens: 100000 }, rateLimits: limits, changed: ['rateLimits'],
+})
+
+test('showLimits is off by default: no limits in the status line, no toasts', { options: { display: 'status' } }, async ($, on) => {
+  mock.clock(on, { now: START })
+  const live = { tokens: 100000, rateLimits: [{ kind: 'five_hour', percentUsed: 90, resetsAt: IN_80_MIN(START) }] }
+  const w = world(on, live)
+  await $.session.start(session)
+  await $.session.measure(measure(live.rateLimits))
+  expect(w.status.some(t => t?.includes('5h'))).toBe(false)
+  expect(w.toasts.length).toBe(0)
+})
+
+test('showLimits shows the windows with the time to reset and the cost', { options: { display: 'status', showLimits: true } }, async ($, on) => {
+  mock.clock(on, { now: START })
+  const live = { tokens: 100000, costUsd: 1.234, rateLimits: [
+    { kind: 'five_hour', percentUsed: 42.4, resetsAt: IN_80_MIN(START) },
+    { kind: 'seven_day', percentUsed: 18, resetsAt: new Date(START + 50 * 60 * MIN).toISOString() },
+  ] }
+  const w = world(on, live)
+  await $.session.start(session)
+  const last = w.status.at(-1) ?? ''
+  expect(last).toContain('5h 42% (resets in 1h20m)')
+  expect(last).toContain('7d 18% (resets in 2d2h)')
+  expect(last).toContain('$1.23')
+})
+
+test('toasts show once per window at 80% and 95%, and again in a new window', { options: { showLimits: true } }, async ($, on) => {
+  mock.clock(on, { now: START })
+  const w = world(on, { tokens: 100000 })
+  await $.session.start(session)
+  const win = (pct: number, resetsAt = IN_80_MIN(START)) => measure([{ kind: 'five_hour', percentUsed: pct, resetsAt }])
+  await $.session.measure(win(70))
+  expect(w.toasts.length).toBe(0)
+  await $.session.measure(win(82))
+  await $.session.measure(win(84))
+  expect(w.toasts.length).toBe(1)
+  expect(w.toasts[0]).toContain('5h limit at 82%')
+  await $.session.measure(win(96))
+  expect(w.toasts.length).toBe(2)
+  await $.session.measure(win(97))
+  expect(w.toasts.length).toBe(2)
+  await $.session.measure(win(81, new Date(START + 400 * MIN).toISOString()))
+  expect(w.toasts.length).toBe(3)
 })

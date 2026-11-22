@@ -20,6 +20,7 @@ What changed to save money:
 - When you send a message on a cold cache, it shows the cost (`guard: warn`) or asks first (`guard: ask`).
 - From 150k tokens it suggests `/compact` or a new session, once per conversation (`compactHint`).
 - After `/compact` the context is small, so pings stop until it grows again. `/clear` resets the message counter.
+- Optional (`showLimits`): a second line with your 5-hour and weekly plan usage and time to reset, plus the session cost, and a toast at 80% and 95% of each window (once per window). Subscription only.
 
 ## Commands
 
@@ -39,6 +40,7 @@ What changed to save money:
 | `compactHint` | 150000 | Context size that triggers the `/compact` hint. 0 disables it. |
 | `guard` | `warn` | `warn`, `ask` or `off` for sending on a cold cache. |
 | `display` | `band` | `band` (line above the prompt) or `status` (status line). |
+| `showLimits` | `false` | Show plan limits (5h, 7d) with time to reset, session cost, and toasts at 80% / 95%. |
 
 Requires the 1-hour cache, which is the default on a subscription. With an API key, set `promptCacheTtl` to `"1h"`.
 

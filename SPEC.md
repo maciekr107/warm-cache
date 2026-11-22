@@ -12,6 +12,7 @@ Mod do Claude Code, który podtrzymuje godzinny cache promptu w przerwach, ale t
 - Ostrzeżenie albo pytanie przed wysyłką na zimny cache (`guard`).
 - Jednorazowa podpowiedź `/compact` od `compactHint` tokenów (domyślnie 150k).
 - Komenda `/warm [status | on | off | auto]`.
+- Opcjonalnie (`showLimits`, domyślnie wyłączone): linia z limitami planu 5h i 7d (procent użycia, czas do resetu), kosztem sesji i toasty przy 80% i 95% każdego okna, raz na okno. Dane z `$.session.usage()` i zdarzenia `session.measure`. Działa tylko na subskrypcji.
 
 ## Architektura
 
@@ -26,6 +27,7 @@ Mod do Claude Code, który podtrzymuje godzinny cache promptu w przerwach, ale t
 - Nazwa `warm-cache`, komenda `/warm`, wszystkie teksty po angielsku (publikacja dla szerszego grona).
 - Mechanizm pingów i tabela cen z cache-tax (MIT); nota o prawach autorskich Karana Bansala w `LICENSE`.
 - Domyślnie `minMessages = 0`: wystarcza próg tokenów.
+- Limity planu dodane do tego moda, a nie jako osobny mod: jeden pasek zamiast dwóch, wspólne dane o koszcie i cache. Wyłączone domyślnie, żeby zachowanie publicznej wersji się nie zmieniło.
 
 ## Uruchomienie
 
