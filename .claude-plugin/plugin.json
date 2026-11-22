@@ -1,6 +1,6 @@
 {
   "name": "warm-cache",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Keeps Claude Code's prompt cache warm during breaks, but only once the context is large enough to be worth it (40k tokens by default). Caps ping cost per break, warns before a cold send and suggests /compact when the context gets big. Based on cache-tax (MIT).",
   "license": "MIT",
   "userConfig": {
