@@ -2,7 +2,7 @@
 // is large enough that rewriting the context actually costs money.
 // The ping mechanism (forking the conversation with a short prompt) and the price table come from
 // cache-tax (https://github.com/karanb192/cache-tax, MIT, Karan Bansal).
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Register, SessionRateLimit } from 'claude-code'
 
 const MIN = 60 * 1000
 const TTL_MS = 60 * MIN
@@ -14,6 +14,8 @@ const WARM_WRITE_SHARE = 0.1
 const PING_PROMPT = 'Reply with the single word: warm'
 const SEND = 'Send'
 const KEEP = "Don't send"
+/** Usage levels (percent of a rate-limit window) at which a toast shows, once per window. */
+const LIMIT_TOASTS = [80, 95]
 
 /** $ per million tokens: [cache read, 1h cache write, output]. From cache-tax, prices as of November 2026. */
 type Price = [number, number, number]
@@ -47,7 +49,7 @@ function priceOf(model: string | null): Price | null {
 }
 
 export type Guard = 'warn' | 'ask' | 'off'
-export type Options = { minMessages: number; minTokens: number; windowMs: number; pingFloor: number; guard: Guard; display: 'band' | 'status'; compactHint: number }
+export type Options = { minMessages: number; minTokens: number; windowMs: number; pingFloor: number; guard: Guard; display: 'band' | 'status'; compactHint: number; showLimits: boolean }
 
 const num = (v: unknown, def: number, min: number, max = Infinity) =>
   typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max ? v : def
@@ -61,6 +63,7 @@ export function optionsFrom(o: Readonly<Record<string, unknown>> | undefined): O
     pingFloor: num(o?.pingFloor, 2, 0),
     guard: o?.guard === 'ask' || o?.guard === 'off' ? o.guard : 'warn',
     display: o?.display === 'status' ? 'status' : 'band',
+    showLimits: o?.showLimits === true,
   }
 }
 
@@ -95,6 +98,11 @@ export type State = {
   hasBand: boolean
   /** Whether the /compact hint has already been shown in this conversation. */
   hinted: boolean
+  /** Rate-limit windows and session cost from the last measurement (only read with showLimits). */
+  limits: SessionRateLimit[]
+  costUsd: number | null
+  /** Highest toast level already shown per window (`kind@resetsAt`). */
+  toasted: Record<string, number>
 }
 
 export function freshState(): State {
@@ -102,6 +110,7 @@ export function freshState(): State {
     mode: 'auto', userMsgs: 0, ctx: 0, model: null, lastRequestAt: 0, steppedThisTurn: false, deadline: 0,
     pending: null, refresh: null, inFlight: false, retried: false, gen: 0, tick: 0, waitForTurn: false, stopped: null,
     idleCost: 0, idleUsd: 0, idlePings: 0, lastPingCost: null, hasBand: false, hinted: false,
+    limits: [], costUsd: null, toasted: {},
   }
 }
 
@@ -135,6 +144,26 @@ export function fmtDur(ms: number): string {
   return t >= 60 ? `${Math.floor(t / 60)}h${String(t % 60).padStart(2, '0')}m` : `${t}m`
 }
 
+/** Time until a window resets: 45m, 3h20m, 2d4h. */
+export function fmtReset(ms: number): string {
+  const t = Math.max(0, Math.round(ms / MIN))
+  if (t >= 24 * 60) return `${Math.floor(t / 1440)}d${Math.floor((t % 1440) / 60)}h`
+  return fmtDur(ms)
+}
+
+const limitLabel = (kind: string) => kind === 'five_hour' ? '5h' : kind === 'seven_day' ? '7d' : kind
+
+/** Rate-limit windows and session cost on one line; '' when showLimits is off or nothing is reported. */
+export function limitsText(s: State, o: Options, now: number): string {
+  if (!o.showLimits) return ''
+  const parts = s.limits.map(l => {
+    const at = l.resetsAt ? Date.parse(l.resetsAt) : NaN
+    return `${limitLabel(l.kind)} ${Math.round(l.percentUsed)}%${Number.isFinite(at) ? ` (resets in ${fmtReset(at - now)})` : ''}`
+  })
+  if (s.costUsd != null && parts.length) parts.push(fmtUsd(s.costUsd))
+  return parts.join(' · ')
+}
+
 function coldUsd(s: State): number | null {
   const p = priceOf(s.model)
   return p ? s.ctx * p[1] / 1e6 : null
@@ -165,7 +194,7 @@ async function redraw($: EngineInterface, c: Ctx) {
   const now = await $.clock.now()
   if (s.hasBand) $.ui.invalidate('ui.render')
   else {
-    const text = statusText(s, o, now)
+    const text = [statusText(s, o, now), limitsText(s, o, now)].filter(Boolean).join(' · ')
     $.ui.status(text ? `warm-cache · ${text}` : undefined)
   }
   // The countdown refreshes every minute, but only while the window is open.
@@ -277,14 +306,17 @@ export const register: Register = (on, options) => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const rest = await next(e)
     if (!s.hasBand || e.props.hasSurvey) return rest
-    const text = statusText(s, o, await $.clock.now())
-    if (!text) return rest
+    const now = await $.clock.now()
+    const text = statusText(s, o, now)
+    const limits = limitsText(s, o, now)
+    if (!text && !limits) return rest
     const { Box, Text } = $.ui.resolve(e)
     const active = Boolean(s.deadline)
     return Box({ flexDirection: 'column', children: [
       rest,
-      Text({ dimColor: !active, children: [Text({ color: active ? 'success' : undefined, bold: active, children: ['warm-cache'] }), ` · ${text}`] }),
-    ] })
+      text ? Text({ dimColor: !active, children: [Text({ color: active ? 'success' : undefined, bold: active, children: ['warm-cache'] }), ` · ${text}`] }) : null,
+      limits ? Text({ dimColor: true, children: [Text({ bold: true, children: ['limits'] }), ` · ${limits}`] }) : null,
+    ].filter(Boolean) })
   })
 
   on('session.start', async ($, e, next) => {
@@ -293,6 +325,8 @@ export const register: Register = (on, options) => {
     s.model = await $.session.model()
     const usage = await $.session.usage()
     if (usage.context.tokens) s.ctx = usage.context.tokens
+    s.limits = usage.rateLimits
+    s.costUsd = usage.cost?.usd ?? null
     await $.command.register({
       name: 'warm',
       description: 'Keep the prompt cache warm: status, on (ignore thresholds), off (this conversation), auto (use thresholds)',
@@ -314,6 +348,26 @@ export const register: Register = (on, options) => {
       if (s.ctx >= o.minTokens) s.userMsgs = Math.max(s.userMsgs, o.minMessages)
       await redraw($, c)
     }
+    return r
+  })
+
+  // Limits and cost arrive pushed with every measurement; toast once per window at each level.
+  on('session.measure', async ($, e, next) => {
+    const r = await next(e)
+    if (!o.showLimits) return r
+    s.limits = e.rateLimits
+    s.costUsd = e.cost?.usd ?? null
+    const now = await $.clock.now()
+    for (const l of s.limits) {
+      const key = `${l.kind}@${l.resetsAt ?? ''}`
+      const level = LIMIT_TOASTS.filter(t => l.percentUsed >= t).pop() ?? 0
+      if (level > (s.toasted[key] ?? 0)) {
+        s.toasted[key] = level
+        const at = l.resetsAt ? Date.parse(l.resetsAt) : NaN
+        $.ui.toast(`warm-cache: ${limitLabel(l.kind)} limit at ${Math.round(l.percentUsed)}%${Number.isFinite(at) ? `, resets in ${fmtReset(at - now)}` : ''}`)
+      }
+    }
+    await redraw($, c)
     return r
   })
 
