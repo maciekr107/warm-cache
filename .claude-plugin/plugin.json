@@ -1,0 +1,58 @@
+{
+  "name": "warm-cache",
+  "version": "0.1.0",
+  "description": "Keeps Claude Code's prompt cache warm during breaks, but only once the context is large enough to be worth it (40k tokens by default). Caps ping cost per break, warns before a cold send and suggests /compact when the context gets big. Based on cache-tax (MIT).",
+  "license": "MIT",
+  "userConfig": {
+    "minMessages": {
+      "type": "number",
+      "title": "Message threshold",
+      "description": "How many of your messages the conversation needs before the mod starts pinging on its own. 0 disables this condition.",
+      "default": 0,
+      "min": 0
+    },
+    "compactHint": {
+      "type": "number",
+      "title": "/compact hint (tokens)",
+      "description": "From this context size the mod suggests /compact or a new session, once per conversation. 0 disables it.",
+      "default": 150000,
+      "min": 0
+    },
+    "minTokens": {
+      "type": "number",
+      "title": "Context threshold (tokens)",
+      "description": "Minimum context size at which keeping the cache warm pays off. Below it the mod neither pings nor warns. 0 disables this condition.",
+      "default": 40000,
+      "min": 0
+    },
+    "windowHours": {
+      "type": "number",
+      "title": "Keep-warm window (hours)",
+      "description": "How long after your last message the mod keeps the cache warm. Every new message restarts the window.",
+      "default": 2,
+      "min": 1,
+      "max": 24
+    },
+    "pingFloor": {
+      "type": "number",
+      "title": "Break budget",
+      "description": "Pings in one break may cost at most (cost of rewriting the context) / this number. 2 by default, 0 for no limit.",
+      "default": 2,
+      "min": 0
+    },
+    "guard": {
+      "type": "string",
+      "title": "Sending on a cold cache",
+      "description": "warn: show the cost and send. ask: ask before sending. off: do nothing. Only applies above the context threshold.",
+      "default": "warn",
+      "options": ["warn", "ask", "off"]
+    },
+    "display": {
+      "type": "string",
+      "title": "Display",
+      "description": "band: a line above the prompt. status: an entry in the status line.",
+      "default": "band",
+      "options": ["band", "status"]
+    }
+  }
+}

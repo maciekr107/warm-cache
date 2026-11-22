@@ -1,0 +1,7 @@
+{
+  "name": "warm-cache",
+  "owner": { "name": "warm-cache" },
+  "plugins": [
+    { "name": "warm-cache", "source": "./" }
+  ]
+}
